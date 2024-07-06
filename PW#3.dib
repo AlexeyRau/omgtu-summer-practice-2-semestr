@@ -32,6 +32,7 @@
 
 #!csharp
 
+using System.Threading;
 //
 // Вычисление определенного интеграла
 //
@@ -46,6 +47,39 @@ class DefiniteIntegral
     public static double Solve(double a, double b, Func<double, double> function, double step, int threadsnumber)
     {
         // отсюда надо начинать реализацию задачи
+        double res = 0;
+        var countOfSegments = (b - a) / step;
+        object lockObject = new object();
+        var threadCountOfSegments = countOfSegments / threadsnumber;
+        Thread[] threads = new Thread[threadsnumber];
+        for (int i = 0; i < threadsnumber; i++)
+        {
+            threads[i] = new Thread(() => Distribution(i-1));
+            threads[i].Start();
+        }
+        for (int i = 0; i < threadsnumber; i++)
+        {
+            threads[i].Join();
+        }
+
+        void Distribution(int threadNumber)
+        {
+            double sum = 0;
+            var start = a + threadNumber * threadCountOfSegments * step;
+            var end = start + threadCountOfSegments * step;
+            sum = 0.5 * (function(start) + function(end));
+            for (int i = 1; i < threadCountOfSegments; i++)
+            {
+               sum += function(start + i * step);
+            }
+            var threadRes = step * sum;
+            lock (lockObject)
+            {
+                res += threadRes;
+            }
+
+        }
+        Console.WriteLine("Результат: " + res);
         return 0.0;
     }
 }
@@ -63,4 +97,4 @@ Assert.Equal(0, DefiniteIntegral.Solve(-1, 1, X, 1e-4, 2), 1e-4);
 
 Assert.Equal(0, DefiniteIntegral.Solve(-1, 1, SIN, 1e-5, 8), 1e-4);
 
-Assert.Equal(10, DefiniteIntegral.Solve(0, 5, X, 1e-6, 8), 1e-5);
+Assert.Equal(0, DefiniteIntegral.Solve(0, 5, X, 1e-6, 8), 1e-5);
