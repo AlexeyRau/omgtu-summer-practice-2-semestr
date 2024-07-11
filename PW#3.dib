@@ -44,45 +44,144 @@ class DefiniteIntegral
     // step - размер одного шага разбиения
     // threadsNumber - число потоков, которые используются для вычислений
     //
-    public static double Solve(double a, double b, Func<double, double> function, double step, int threadsnumber)
+    public static double Solve(double a, double b, Func<double, double> function, double step, int threadsNumber)
     {
         // отсюда надо начинать реализацию задачи
-        double res = 0;
-        var countOfSegments = (b - a) / step;
+        var barrier = new Barrier(threadsNumber + 1);
         object lockObject = new object();
-        var threadCountOfSegments = countOfSegments / threadsnumber;
-        Thread[] threads = new Thread[threadsnumber];
-        for (int i = 0; i < threadsnumber; i++)
+        var countOfSegments = Math.Round((b - a) / step);
+        var threadCountOfSegments = countOfSegments / threadsNumber;
+        var totalSum = 0.0;
+        bool remains = false;
+        int j = 1;
+        while (true)
         {
-            threads[i] = new Thread(() => Distribution(i-1));
-            threads[i].Start();
+            if (threadCountOfSegments % 1 != 0 && threadsNumber != 0)
+            {   
+                threadCountOfSegments = (countOfSegments - j) / threadsNumber;
+                j++;
+                remains = true;
+            }
+            else
+            {
+                break;
+            }
         }
-        for (int i = 0; i < threadsnumber; i++)
+        if (remains)
         {
-            threads[i].Join();
+            totalSum += 0.5 * (function(a + threadCountOfSegments * threadsNumber * step) + function(b));
+            for (int i = 1; i < (countOfSegments - threadCountOfSegments * threadsNumber); i++)
+            {
+                totalSum += function(a + threadCountOfSegments * threadsNumber * step + i * step);
+            }
         }
-
-        void Distribution(int threadNumber)
+        for (int i = 0; i < threadsNumber; i++)
         {
-            double sum = 0;
-            var start = a + threadNumber * threadCountOfSegments * step;
-            var end = start + threadCountOfSegments * step;
-            sum = 0.5 * (function(start) + function(end));
+            double start = a + i * threadCountOfSegments * step;
+            double end = start + threadCountOfSegments * step;
+            Thread thread = new Thread(() => Distribution(i - 1, start, end));
+            thread.Start();
+        }
+        barrier.SignalAndWait();
+        void Distribution(int threadNumber, double start, double end)
+        {
+            double localSum = 0.0;
+            localSum = 0.5 * (function(a) + function(a + threadCountOfSegments * threadsNumber * step));
             for (int i = 1; i < threadCountOfSegments; i++)
             {
-               sum += function(start + i * step);
-            }
-            var threadRes = step * sum;
+                localSum += function(start + i * step);
+            }   
             lock (lockObject)
             {
-                res += threadRes;
+                totalSum += localSum;
             }
-
+            barrier.SignalAndWait();
+            
         }
-        Console.WriteLine("Результат: " + res);
-        return 0.0;
+        totalSum *= step;
+        return totalSum;
     }
 }
+
+#!csharp
+
+class DefiniteIntegralNoThreads
+{
+public static double Solve(double a, double b, Func<double, double> function, double step) {
+        
+        var countOfSegments = (b - a) / step;
+        double sum = 0.5 * (function(a) + function(b));
+        for (int i = 1; i < countOfSegments; i++)
+        {
+            sum += function(a + i * step);
+        }
+        double res = step * sum;
+        return res;
+        
+    }
+}
+
+#!csharp
+
+using System.Diagnostics;
+//Выбор оптимального шага
+List<double> steps = new List<double>(){1e-1, 1e-2, 1e-3, 1e-4, 1e-5, 1e-6};
+Stopwatch stopwatch = new Stopwatch();
+foreach(double step in steps)
+{
+    stopwatch.Start();
+    Assert.Equal(0, DefiniteIntegral.Solve(-100, 100, SIN, step, 10), 1e-4);
+    stopwatch.Stop();
+    var res = DefiniteIntegral.Solve(-100, 100, SIN, step, 5);
+    Console.WriteLine($"Шаг: {stopwatch}, Время: {stopwatch.Elapsed}, Результат: {res}");
+    stopwatch.Reset();
+}
+//Оптимальный шаг 1e-3
+
+#!csharp
+
+//Оптимальное число потоков
+// Install the ScottPlot NuGet package
+#r "nuget:ScottPlot, 5.0.36"
+
+// Setup a custom formatter to display plots as images
+using Microsoft.DotNet.Interactive.Formatting;
+Formatter.Register(typeof(ScottPlot.Plot), (p, w) => 
+    w.Write(((ScottPlot.Plot)p).GetImageHtml(600, 600)), HtmlFormatter.MimeType);
+List<double> graphX = new List<double>();
+List<double> graphY = new List<double>();
+int optimalNumberThreads = 0;
+var optimalTime = double.MaxValue;
+
+// plot the data
+ScottPlot.Plot plt = new();
+
+for(int i = 0; i <= 10; i++)
+{
+    stopwatch.Start();
+    var res = DefiniteIntegral.Solve(-100, 100, SIN, 1e-3, i);
+    stopwatch.Stop();
+    Console.WriteLine($"Потоков: {i}, Время: {stopwatch}, Результат: {res}");
+    graphX.Add(stopwatch.ElapsedTicks*1e-4);
+    graphY.Add(i);
+    if(optimalTime > (stopwatch.ElapsedTicks*1e-4) && i != 0)
+    {
+        optimalTime = stopwatch.ElapsedTicks*1e-4;
+        optimalNumberThreads = i;
+    }
+    stopwatch.Reset();
+}
+stopwatch.Start();
+var res = DefiniteIntegralNoThreads.Solve(-100, 100, SIN, 1e-3);
+stopwatch.Stop();
+Console.WriteLine();
+Console.WriteLine($"Без потоков: Время: {stopwatch.ElapsedTicks*1e-4}мс, Результат: {res}");
+Console.WriteLine($"Оптимальное число потоков: {optimalNumberThreads}, Время: {optimalTime}мс");
+
+Console.WriteLine($"Процентная разница: {((stopwatch.ElapsedTicks*1e-4-optimalTime)/(stopwatch.ElapsedTicks*1e-4))*100}%");
+stopwatch.Reset();
+plt.Add.Scatter(graphX, graphY);
+plt
 
 #!csharp
 
@@ -97,4 +196,13 @@ Assert.Equal(0, DefiniteIntegral.Solve(-1, 1, X, 1e-4, 2), 1e-4);
 
 Assert.Equal(0, DefiniteIntegral.Solve(-1, 1, SIN, 1e-5, 8), 1e-4);
 
-Assert.Equal(0, DefiniteIntegral.Solve(0, 5, X, 1e-6, 8), 1e-5);
+Assert.Equal(50, DefiniteIntegral.Solve(0, 10, X, 1e-6, 8), 1e-5);
+
+#!markdown
+
+# Summary
+Оптимальный шаг - 1e-3
+
+Оптимальное количество потоков - 4
+
+Разница в процентах - 56%
